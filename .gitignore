@@ -1,0 +1,9 @@
+# Generated reports
+codex_*_report_*
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+
+# Platform artefacts
+.DS_Store

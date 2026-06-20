@@ -1,12 +1,12 @@
 # Codex Usage
 
-Codex Usage is a local command-line tool for people who use Codex and want a clear view of reset credits, rate-limit windows, local usage metadata and read-only online usage/profile data.
+Codex Usage is a local command-line tool for people who want a clear view of their Codex reset credits, rate-limit windows, local usage metadata and read-only online usage/profile data.
 
-Codex Usage is intentionally small. It is one Python file, needs no package install, uses no third-party Python dependencies and does not require an OpenAI API key. Run it from the folder that contains `codex_usage.py`, choose the menu or a direct command, and read the report in your terminal.
+The project is intentionally small: one Python file, no package install, no third-party Python dependencies and no OpenAI API key. Run it from the folder that contains `codex_usage.py`, choose the menu or a direct command, and read the report in your terminal.
 
-Use Codex Usage when you want to see how many reset credits are available, when they expire in your local timezone, whether visible rate-limit windows are close to their limit, and what local Codex metadata says about sessions, models, days and token totals. The tool can also export the same reports as TXT, JSON or CSV files beside the script.
+Use it to see how many reset credits are available, when they expire in your local timezone, whether visible rate-limit windows are close to their limit, and what local Codex metadata says about sessions, models, days and token totals. You can export the same reports as TXT, JSON or CSV files beside the script.
 
-Codex Usage is not an official OpenAI or Codex tool. It does not redeem credits, buy credits, change your Codex or ChatGPT account, change Codex settings, upload local transcripts, or use OpenAI API billing. The online data comes from undocumented ChatGPT/Codex backend endpoints, so treat it as useful operational information rather than a contractual billing statement.
+This is not an official OpenAI or Codex tool. It does not redeem credits, buy credits, change your Codex or ChatGPT account, change Codex settings, upload local transcripts, or use OpenAI API billing. The online data comes from undocumented ChatGPT/Codex backend endpoints, so treat it as useful operational information rather than a contractual billing statement.
 
 ## Requirements
 

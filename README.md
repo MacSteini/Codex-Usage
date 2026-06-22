@@ -275,10 +275,13 @@ If a numeric option is invalid, the script exits before making requests. `--top`
 
 Bug reports, focused fixes and documentation improvements are welcome.
 
-Keep changes narrow and include the checks that match the touched area. For README-only changes, run the repository validation. For script changes, also run the relevant `--help` command and a syntax check:
+Keep changes narrow and include the checks that match the touched area. For README-only changes, run the repository validation. For script changes, also run the relevant `--help` command, syntax check and Python lint checks:
 
 ```sh
 python3 -m py_compile ./codex_usage.py
+ruff check ./codex_usage.py
+ruff format --check ./codex_usage.py
+pyflakes ./codex_usage.py
 python3 codex_usage.py --help
 ```
 

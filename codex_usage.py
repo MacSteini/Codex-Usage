@@ -38,8 +38,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-AUTH_PATH = Path("~/.codex/auth.json").expanduser()
-CODEX_HOME = Path("~/.codex").expanduser()
+
+def resolve_codex_home() -> Path:
+    codex_home = os.environ.get("CODEX_HOME")
+    if codex_home:
+        return Path(codex_home).expanduser()
+    return Path.home() / ".codex"
+
+
+CODEX_HOME = resolve_codex_home()
+AUTH_PATH = CODEX_HOME / "auth.json"
 SCRIPT_DIR = Path(__file__).resolve().parent
 EXPORT_DIR = SCRIPT_DIR
 API_BASE = "https://chatgpt.com/backend-api"

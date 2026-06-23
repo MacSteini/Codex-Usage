@@ -1,0 +1,6 @@
+CLAUDE.MD
+AGENTS.MD
+.projectmem/*
+__pycache__/*
+*.pyc
+.ruff_cache/*

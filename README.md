@@ -11,11 +11,11 @@ This is not an official OpenAI or Codex tool. It does not redeem credits, buy cr
 ## Requirements
 
 - Python 3.10 or newer.
-- macOS or Linux.
-- Local Codex state under `~/.codex` for `local-usage`.
-- A Codex login at `~/.codex/auth.json` and network access for `resets`, `online-usage`, `all` and menu quick summaries.
+- macOS, Linux or Windows.
+- Local Codex state under your Codex home directory for `local-usage`.
+- A Codex login at `auth.json` inside your Codex home directory and network access for `resets`, `online-usage`, `all` and menu quick summaries.
 
-No third-party Python packages are required. Windows is not supported because the script expects Unix-style paths, an executable shebang workflow and a Codex home at `~/.codex`.
+No third-party Python packages are required. By default, Codex Usage reads Codex data from `Path.home() / ".codex"`. Set `CODEX_HOME` to use a different Codex home directory.
 
 The source layout is deliberately small:
 
@@ -44,13 +44,38 @@ If you prefer not to mark the file executable, run it through Python:
 python3 codex_usage.py
 ```
 
+On Windows, open PowerShell in the folder that contains `codex_usage.py`, then run the script with the Python launcher:
+
+```powershell
+py -3 .\codex_usage.py
+```
+
+Run a local-only report:
+
+```powershell
+py -3 .\codex_usage.py local-usage
+```
+
 You can check the script syntax before running it:
 
 ```sh
 python3 -m py_compile ./codex_usage.py
 ```
 
+PowerShell equivalent:
+
+```powershell
+py -3 -m py_compile .\codex_usage.py
+```
+
 The syntax check only verifies that Python can parse the script. It does not contact Codex and does not read your account data.
+
+If your Codex data is not in the default user-profile `.codex` directory, set `CODEX_HOME` before running the script:
+
+```powershell
+$env:CODEX_HOME = "C:\Users\Mike\.codex"
+py -3 .\codex_usage.py local-usage
+```
 
 ## Use The Reports
 
@@ -164,7 +189,7 @@ Shared display switches:
 | `--days N` | `all`, `menu`, `local-usage`, `export` | Number of recent daily local-usage rows to show/include. | `30` |
 | `--warn-days N` | `all`, `menu`, `resets`, `export` | Warn when reset credits expire within this many days. Use `0` to disable soon-expiry warnings. | `7` |
 
-The menu and commands use the same display settings. `top` controls ranked-table length, such as top sessions or model usage. `days` controls how many recent calendar days appear in daily local-usage tables. `warn_days` controls how soon reset-credit expiry should produce a warning; use `0` to disable soon-expiry warnings. These settings affect display and export size only. They do not change Codex, your account or `~/.codex`.
+The menu and commands use the same display settings. `top` controls ranked-table length, such as top sessions or model usage. `days` controls how many recent calendar days appear in daily local-usage tables. `warn_days` controls how soon reset-credit expiry should produce a warning; use `0` to disable soon-expiry warnings. These settings affect display and export size only. They do not change Codex, your account, your Codex home directory or any server setting.
 
 ## Exports
 
@@ -208,14 +233,16 @@ The script never removes exported reports. If you export inside a Git checkout, 
 Codex Usage reuses your existing Codex login file:
 
 ```text
-~/.codex/auth.json
+<Codex home>/auth.json
 ```
+
+The Codex home directory is `Path.home() / ".codex"` unless `CODEX_HOME` is set.
 
 The script reads the access token and account ID from that file when it calls Codex/ChatGPT backend endpoints. It does not print them, and you do not need an OpenAI API key.
 
 Online responses are redacted before display or export. Token-like and identity-like fields are filtered by sensitive field name, including access tokens, refresh tokens, ID tokens, authorisation headers, cookies, session values, account IDs, email fields, phone fields, passwords and secrets. Email addresses inside string values are also redacted.
 
-Local usage mode reads metadata and counters from `~/.codex`. It avoids prompt text, assistant text, command text, diffs, transcripts and secret contents.
+Local usage mode reads metadata and counters from your Codex home directory. It avoids prompt text, assistant text, command text, diffs, transcripts and secret contents.
 
 ## Network Behaviour
 
@@ -249,7 +276,9 @@ If `./codex_usage.py` says permission is denied, make it executable:
 chmod +x codex_usage.py
 ```
 
-If the script says `~/.codex/auth.json` is missing or malformed, sign in to Codex first, then run the script again. Codex Usage reuses that existing login; it does not ask for, store or need an OpenAI API key.
+If the script says `<Codex home>/auth.json` is missing or malformed, sign in to Codex first, then run the script again. Codex Usage reuses that existing login; it does not ask for, store or need an OpenAI API key.
+
+By default, `<Codex home>` is `Path.home() / ".codex"`, so existing users with the default location do not need to change anything. On Windows or custom layouts, set `CODEX_HOME` when Codex data is not under the default user-profile `.codex` directory.
 
 If online sections fail but `local-usage` works, the likely causes are network access, an expired Codex login, or undocumented backend endpoints changing. You can still run the local-only report without network access:
 
@@ -285,7 +314,7 @@ pyflakes ./codex_usage.py
 python3 codex_usage.py --help
 ```
 
-Do not include access tokens, `~/.codex/auth.json`, exported reports, raw backend responses, local transcripts, private prompts, private paths or account data in issues, commits, fixtures or screenshots.
+Do not include access tokens, `<Codex home>/auth.json`, exported reports, raw backend responses, local transcripts, private prompts, private paths or account data in issues, commits, fixtures or screenshots.
 
 Please report security or privacy issues privately instead of publishing exploit details.
 

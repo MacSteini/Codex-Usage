@@ -1,10 +1,10 @@
 # Codex Usage
 
-Codex Usage is a local command-line tool for people who want a clear view of their Codex reset credits, rate-limit windows, local usage metadata, read-only online usage/profile data and optional OpenAI API organisation usage.
+Codex Usage is a local command-line tool for people who want a clear view of their Codex reset credits, rate-limit windows, local usage metadata, local setup health, one-file session metadata, read-only online usage/profile data and optional OpenAI API organisation usage.
 
 The project is intentionally small: one Python file, no package install and no third-party Python dependencies. The core Codex reports do not need an OpenAI API key. The optional `api-usage` report uses `OPENAI_ADMIN_KEY` when you choose that report.
 
-Use it to see how many reset credits are available, when they expire in your local timezone, whether visible rate-limit windows are close to their limit, what local Codex metadata says about sessions, models, days and token totals, and what the OpenAI Admin API reports for organisation API usage and costs. You can export the same reports as TXT, JSON or CSV files beside the script.
+Use it to see how many reset credits are available, when they expire in your local timezone, whether visible rate-limit windows are close to their limit, what local Codex metadata says about sessions, models, days and token totals, whether the local setup is ready for each report, what one session JSONL file contains at a metadata level, and what the OpenAI Admin API reports for organisation API usage and costs. You can export the main reports as TXT, JSON or CSV files beside the script.
 
 This is not an official OpenAI or Codex tool. It does not redeem credits, buy credits, change your Codex or ChatGPT account, change Codex settings, or upload local transcripts. The Codex online data comes from undocumented ChatGPT/Codex backend endpoints, so treat it as useful operational information rather than a contractual billing statement. The optional `api-usage` report uses documented OpenAI Admin API endpoints for API organisation usage and costs; it is not ChatGPT or Codex subscription billing.
 
@@ -131,6 +131,20 @@ Show local usage without network calls:
 ./codex_usage.py local-usage --top 20 --days 60
 ```
 
+Check local setup without network calls:
+
+```sh
+./codex_usage.py doctor
+./codex_usage.py doctor --json
+```
+
+Inspect summary metadata from one local session JSONL file:
+
+```sh
+./codex_usage.py inspect-log ~/.codex/sessions/YYYY/MM/DD/session.jsonl
+./codex_usage.py inspect-log ~/.codex/sessions/YYYY/MM/DD/session.jsonl --json
+```
+
 Show read-only online usage/profile data:
 
 ```sh
@@ -183,6 +197,8 @@ For automation, print machine-readable JSON instead of prose and tables:
 ./codex_usage.py all --json
 ./codex_usage.py resets --json
 ./codex_usage.py local-usage --json
+./codex_usage.py doctor --json
+./codex_usage.py inspect-log ~/.codex/sessions/YYYY/MM/DD/session.jsonl --json
 ./codex_usage.py online-usage --json
 ./codex_usage.py api-usage --json
 ```
@@ -209,6 +225,8 @@ For automation, print machine-readable JSON instead of prose and tables:
 | `./codex_usage.py all` | Shows reset credits, local usage and online usage/profile. | Yes |
 | `./codex_usage.py resets` | Shows reset-credit count and expiry. | Yes |
 | `./codex_usage.py local-usage` | Shows local Codex metadata and counters only. | No |
+| `./codex_usage.py doctor` | Checks local setup, report readiness and environment flags without printing secrets. | No |
+| `./codex_usage.py inspect-log FILE.jsonl` | Shows summary metadata from one local session JSONL file without printing prompts, outputs, commands, diffs or raw JSON. | No |
 | `./codex_usage.py online-usage` | Shows read-only online usage/profile data. | Yes |
 | `./codex_usage.py api-usage` | Shows optional OpenAI API organisation usage and costs using `OPENAI_ADMIN_KEY`. | Yes |
 | `./codex_usage.py export` | Writes a report beside the script. | Depends on `--report` |
@@ -220,7 +238,7 @@ Shared display switches:
 | `-h`, `--help` | All commands | Show help and exit. | n/a |
 | `--colour {auto,always,never}` / `--color {auto,always,never}` | All subcommands | Control terminal colour output. | `auto` |
 | `--no-colour` / `--no-color` | All subcommands | Disable colour output. Useful for logs and copied output. | off |
-| `--json` | `all`, `resets`, `local-usage`, `online-usage`, `api-usage` | Print machine-readable JSON instead of prose/tables. | off |
+| `--json` | `all`, `resets`, `local-usage`, `doctor`, `inspect-log`, `online-usage`, `api-usage` | Print machine-readable JSON instead of prose/tables. | off |
 | `--top N` | `all`, `menu`, `local-usage`, `online-usage`, `api-usage`, `export` | Limit ranked rows and Technical details field samples. | `10` for `all`, `menu`, `local-usage`, `api-usage` and `export`; `30` for direct `online-usage` |
 | `--days N` | `all`, `menu`, `local-usage`, `api-usage`, `export` | Number of recent days to show/include. For `api-usage`, this controls the Admin API query window. | `30` |
 | `--warn-days N` | `all`, `menu`, `resets`, `export` | Warn when reset credits expire within this many days. Use `0` to disable soon-expiry warnings. | `7` |
@@ -293,14 +311,20 @@ Online responses are redacted before display or export. Token-like and identity-
 
 Local usage mode reads metadata and counters from your Codex home directory. It avoids prompt text, assistant text, command text, diffs, transcripts and secret contents.
 
+`doctor` checks local setup metadata only: Python version, script path, Codex home presence, auth file shape, session-file count, SQLite thread table presence and whether `OPENAI_ADMIN_KEY` is set. It does not print token values, account IDs or the Admin key.
+
+`inspect-log` reads one `.jsonl` file and prints summary metadata only: counts, timestamps, safe record categories and token counters. It does not print prompts, assistant replies, command text, diffs, raw JSON records, tokens, account IDs or secret values.
+
 The optional `api-usage` report reads `OPENAI_ADMIN_KEY` from the environment. It does not accept the key as a command-line argument, does not read it from `<Codex home>/auth.json`, and does not print or export it. API key IDs, organisation IDs, project IDs and user IDs are shortened before display or export. Do not include real Admin keys, raw billing responses or private account identifiers in issues, screenshots, fixtures or commits.
 
 ## Network Behaviour
 
-Local usage mode makes no network calls:
+Local usage, setup checks and JSONL inspection make no network calls:
 
 ```sh
 ./codex_usage.py local-usage
+./codex_usage.py doctor
+./codex_usage.py inspect-log ~/.codex/sessions/YYYY/MM/DD/session.jsonl
 ```
 
 Reset and online usage modes call undocumented ChatGPT/Codex backend endpoints with read-only `GET` requests. The script uses them for reset credits, rate-limit and usage summaries, daily token breakdowns, credit events and profile metadata. These endpoints may change without notice. Treat their output as operational information that helps you understand the current account state visible to those endpoints, not as an official billing source.
@@ -330,6 +354,14 @@ If `./codex_usage.py` says permission is denied, make it executable:
 ```sh
 chmod +x codex_usage.py
 ```
+
+If a report cannot find local Codex state, run the setup check:
+
+```sh
+./codex_usage.py doctor
+```
+
+The setup check is local-only. It reports whether the Codex home directory, auth file shape, session files and SQLite thread table are visible to the script.
 
 If the script says `<Codex home>/auth.json` is missing or malformed, sign in to Codex first, then run the script again. Codex Usage reuses that existing login; the core reports do not ask for, store or need an OpenAI API key.
 

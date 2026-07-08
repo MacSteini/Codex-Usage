@@ -26,6 +26,7 @@ import io
 import json
 import math
 import os
+import platform
 import re
 import shutil
 import sqlite3
@@ -90,6 +91,11 @@ ADMIN_USAGE_GROUP_FIELDS = {
 ADMIN_COST_GROUP_FIELDS = {"project_id", "line_item", "api_key_id"}
 ADMIN_IDENTIFIER_KEYS = {"api_key_id", "organization_id", "project_id", "user_id"}
 EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+SAFE_LOG_VALUE_RE = re.compile(r"^[A-Za-z0-9_.:/@+-]{1,80}$")
+SENSITIVE_LOG_VALUE_RE = re.compile(
+    r"(access[_-]?token|refresh[_-]?token|id[_-]?token|authorization|bearer|secret|password|cookie|sk-[A-Za-z0-9])",
+    re.I,
+)
 ANSI = {
     "red": "\033[31m",
     "green": "\033[32m",
@@ -1205,6 +1211,496 @@ def cmd_local_usage(args: argparse.Namespace) -> None:
         print_json(data)
     else:
         print_local_usage(data, top=args.top, days=args.days)
+
+
+def path_status(path: Path) -> dict[str, Any]:
+    status: dict[str, Any] = {
+        "path": str(path),
+        "exists": path.exists(),
+        "is_file": path.is_file(),
+        "is_dir": path.is_dir(),
+        "readable": os.access(path, os.R_OK),
+    }
+    try:
+        stat = path.stat()
+    except OSError as exc:
+        status["stat_error"] = f"{type(exc).__name__}: {exc}"
+        return status
+    status["size_bytes"] = stat.st_size
+    status["mtime_local"] = (
+        datetime.fromtimestamp(stat.st_mtime)
+        .astimezone()
+        .strftime("%Y-%m-%d %H:%M:%S %Z %z")
+    )
+    return status
+
+
+def sqlite_health(codex_home: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for db_path in [
+        codex_home / "state_5.sqlite",
+        codex_home / "sqlite" / "state_5.sqlite",
+    ]:
+        item = path_status(db_path)
+        item["has_threads_table"] = False
+        item["thread_rows"] = None
+        if db_path.is_file():
+            try:
+                con = connect_sqlite_readonly(db_path)
+                cur = con.cursor()
+                has_threads = (
+                    cur.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='threads'"
+                    ).fetchone()
+                    is not None
+                )
+                item["has_threads_table"] = has_threads
+                if has_threads:
+                    item["thread_rows"] = int(
+                        cur.execute("SELECT COUNT(*) FROM threads").fetchone()[0] or 0
+                    )
+                con.close()
+            except sqlite3.Error as exc:
+                item["sqlite_error"] = f"{type(exc).__name__}: {exc}"
+        rows.append(item)
+    return rows
+
+
+def auth_health(auth_path: Path) -> dict[str, Any]:
+    status = path_status(auth_path)
+    status.update(
+        {
+            "valid_json": False,
+            "tokens_object_present": False,
+            "access_token_present": False,
+            "account_id_present": False,
+        }
+    )
+    if not auth_path.is_file():
+        return status
+    try:
+        auth = json.loads(auth_path.read_text(encoding="utf-8"))
+        status["valid_json"] = True
+    except json.JSONDecodeError as exc:
+        status["json_error"] = f"{type(exc).__name__}: {exc}"
+        return status
+    except OSError as exc:
+        status["read_error"] = f"{type(exc).__name__}: {exc}"
+        return status
+    tokens = auth.get("tokens") if isinstance(auth, dict) else None
+    status["tokens_object_present"] = isinstance(tokens, dict)
+    if isinstance(tokens, dict):
+        status["access_token_present"] = bool(tokens.get("access_token"))
+        status["account_id_present"] = bool(tokens.get("account_id"))
+    return status
+
+
+def count_jsonl_files(path: Path) -> int | None:
+    if not path.is_dir():
+        return None
+    try:
+        return sum(1 for _ in path.rglob("*.jsonl"))
+    except OSError:
+        return None
+
+
+def collect_doctor() -> dict[str, Any]:
+    sessions_dir = CODEX_HOME / "sessions"
+    auth = auth_health(AUTH_PATH)
+    sqlite = sqlite_health(CODEX_HOME)
+    codex_home_status = path_status(CODEX_HOME)
+    session_count = count_jsonl_files(sessions_dir)
+    admin_key_present = admin_api_key() is not None
+    auth_ready = bool(
+        auth.get("valid_json")
+        and auth.get("tokens_object_present")
+        and auth.get("access_token_present")
+        and auth.get("account_id_present")
+    )
+    local_ready = bool(codex_home_status.get("is_dir"))
+    warnings: list[str] = []
+    if not local_ready:
+        warnings.append("Codex home directory was not found.")
+    if not auth_ready:
+        warnings.append(
+            "Codex auth.json is missing, unreadable, invalid, or incomplete."
+        )
+    if session_count in (None, 0):
+        warnings.append("No session JSONL files were found under the Codex home.")
+    if not any(item.get("has_threads_table") for item in sqlite):
+        warnings.append("No readable Codex SQLite threads table was found.")
+
+    return {
+        "retrieved_at_local": local_now_text(),
+        "network_calls_made": 0,
+        "privacy_note": "Setup metadata only; no tokens, account IDs, prompts, transcripts, commands, diffs, or secrets are printed.",
+        "python": {
+            "version": platform.python_version(),
+            "executable": sys.executable,
+            "implementation": platform.python_implementation(),
+            "platform": platform.platform(),
+        },
+        "script": {
+            "path": str(Path(__file__).resolve()),
+            "directory": str(SCRIPT_DIR),
+            "export_directory_writable": os.access(EXPORT_DIR, os.W_OK),
+        },
+        "environment": {
+            "CODEX_HOME_set": bool(os.environ.get("CODEX_HOME")),
+            "OPENAI_ADMIN_KEY_set": admin_key_present,
+            "NO_COLOR_set": os.environ.get("NO_COLOR") is not None,
+        },
+        "codex_home": codex_home_status,
+        "auth": auth,
+        "sessions": {
+            "path": str(sessions_dir),
+            "exists": sessions_dir.exists(),
+            "jsonl_files": session_count,
+        },
+        "sqlite": sqlite,
+        "readiness": {
+            "local_usage": local_ready,
+            "resets_and_online_usage": auth_ready,
+            "api_usage": admin_key_present,
+        },
+        "warnings": warnings,
+    }
+
+
+def print_doctor(data: dict[str, Any]) -> None:
+    section("Codex Usage Setup Check")
+    explain(
+        "This local check verifies the Python runtime, Codex home directory, auth file shape, session files, SQLite state, and optional Admin API key presence. It makes no network calls and writes no files."
+    )
+    print_counter_table(
+        "Check overview",
+        ["Metric", "Value"],
+        [
+            ["Retrieved", data.get("retrieved_at_local")],
+            ["Network calls made", fmt_int(data.get("network_calls_made"))],
+            ["Python", data.get("python", {}).get("version")],
+            ["Platform", data.get("python", {}).get("platform")],
+            ["Script", data.get("script", {}).get("path")],
+            [
+                "Export directory writable",
+                bool_text(data.get("script", {}).get("export_directory_writable")),
+            ],
+        ],
+    )
+
+    env = data.get("environment", {})
+    print_counter_table(
+        "Environment",
+        ["Setting", "Status"],
+        [
+            ["CODEX_HOME", "set" if env.get("CODEX_HOME_set") else "default"],
+            [
+                ADMIN_KEY_ENV,
+                "set (value hidden)" if env.get("OPENAI_ADMIN_KEY_set") else "not set",
+            ],
+            ["NO_COLOR", "set" if env.get("NO_COLOR_set") else "not set"],
+        ],
+    )
+
+    codex_home = data.get("codex_home", {})
+    auth = data.get("auth", {})
+    sessions = data.get("sessions", {})
+    print_counter_table(
+        "Codex local state",
+        ["Item", "Value"],
+        [
+            ["Codex home", codex_home.get("path")],
+            ["Codex home exists", bool_text(codex_home.get("exists"))],
+            ["Codex home readable", bool_text(codex_home.get("readable"))],
+            ["Auth file", auth.get("path")],
+            ["Auth JSON valid", bool_text(auth.get("valid_json"))],
+            ["Auth token fields present", bool_text(auth.get("access_token_present"))],
+            ["Auth account field present", bool_text(auth.get("account_id_present"))],
+            ["Sessions directory", sessions.get("path")],
+            ["Session JSONL files", fmt_int(sessions.get("jsonl_files"))],
+        ],
+    )
+
+    sqlite_rows = []
+    for item in data.get("sqlite", []):
+        sqlite_rows.append(
+            [
+                item.get("path") or "—",
+                bool_text(item.get("exists")),
+                bool_text(item.get("has_threads_table")),
+                fmt_int(item.get("thread_rows")),
+                item.get("sqlite_error") or item.get("stat_error") or "—",
+            ]
+        )
+    print_counter_table(
+        "SQLite candidates",
+        ["Path", "Exists", "Threads table", "Rows", "Error"],
+        sqlite_rows,
+    )
+
+    readiness = data.get("readiness", {})
+    print_counter_table(
+        "Readiness",
+        ["Report", "Ready"],
+        [
+            ["local-usage", bool_text(readiness.get("local_usage"))],
+            [
+                "resets / online-usage",
+                bool_text(readiness.get("resets_and_online_usage")),
+            ],
+            ["api-usage", bool_text(readiness.get("api_usage"))],
+        ],
+    )
+    warnings = data.get("warnings", [])
+    if warnings:
+        print(colour("Warnings", "yellow"))
+        for warning in warnings:
+            print(f"  • {warning}")
+        print()
+    print("Notes")
+    print("-----")
+    print("• This command is read-only, local-only, and makes no network calls.")
+    print("• Secret values and account identifiers are not printed.")
+
+
+def cmd_doctor(args: argparse.Namespace) -> None:
+    set_colour_mode(getattr(args, "colour", None))
+    data = collect_doctor()
+    if args.json:
+        print_json(data)
+    else:
+        print_doctor(data)
+
+
+def safe_log_label(value: Any) -> str:
+    if not isinstance(value, str) or not value:
+        return "(blank)"
+    if SENSITIVE_LOG_VALUE_RE.search(value) or EMAIL_RE.search(value):
+        return "[REDACTED]"
+    if not SAFE_LOG_VALUE_RE.fullmatch(value):
+        return "[REDACTED]"
+    return value
+
+
+def safe_key_label(value: Any) -> str:
+    text = str(value)
+    return "[REDACTED_KEY]" if SENSITIVE_KEY_RE.search(text) else text
+
+
+def usage_from_payload(payload: dict[str, Any]) -> dict[str, int] | None:
+    info = payload.get("info")
+    if not isinstance(info, dict):
+        return None
+    total_usage = info.get("total_token_usage")
+    if not isinstance(total_usage, dict):
+        return None
+    usage: dict[str, int] = {}
+    for field in USAGE_FIELDS:
+        value = total_usage.get(field)
+        if isinstance(value, (int, float)):
+            usage[field] = int(value)
+    return usage or None
+
+
+def timestamp_from_record(
+    obj: dict[str, Any], payload: dict[str, Any]
+) -> datetime | None:
+    for container in (payload, obj):
+        for key in ("timestamp", "created_at", "time", "ts"):
+            value = container.get(key)
+            if isinstance(value, (int, float)):
+                number = float(value)
+                if number > 10_000_000_000:
+                    number /= 1000
+                try:
+                    return datetime.fromtimestamp(number, timezone.utc)
+                except (OSError, OverflowError, ValueError):
+                    continue
+            if isinstance(value, str):
+                parsed = parse_dt(value)
+                if parsed is not None:
+                    return parsed
+    return None
+
+
+def inspect_jsonl_file(path: Path, top: int) -> dict[str, Any]:
+    if not path.is_file():
+        die(f"JSONL file not found: {path}")
+    if path.suffix.lower() != ".jsonl":
+        die(f"Expected a .jsonl file: {path}")
+
+    top_level_keys: Counter[str] = Counter()
+    payload_keys: Counter[str] = Counter()
+    record_types: Counter[str] = Counter()
+    item_types: Counter[str] = Counter()
+    roles: Counter[str] = Counter()
+    models: Counter[str] = Counter()
+    providers: Counter[str] = Counter()
+    context_windows: Counter[str] = Counter()
+    timestamps: list[datetime] = []
+    final_usage: dict[str, int] | None = None
+    max_usage: Counter[str] = Counter()
+    lines_seen = 0
+    json_objects = 0
+    parse_errors = 0
+    records_with_usage = 0
+    records_with_cwd = 0
+
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                lines_seen += 1
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    parse_errors += 1
+                    continue
+                if not isinstance(obj, dict):
+                    continue
+                json_objects += 1
+                for key in obj:
+                    top_level_keys[safe_key_label(key)] += 1
+                payload = (
+                    obj.get("payload") if isinstance(obj.get("payload"), dict) else obj
+                )
+                if not isinstance(payload, dict):
+                    continue
+                for key in payload:
+                    payload_keys[safe_key_label(key)] += 1
+                record_types[
+                    safe_log_label(obj.get("type") or payload.get("type"))
+                ] += 1
+                if isinstance(payload.get("model"), str):
+                    models[safe_log_label(payload.get("model"))] += 1
+                if isinstance(payload.get("model_provider"), str):
+                    providers[safe_log_label(payload.get("model_provider"))] += 1
+                if isinstance(payload.get("role"), str):
+                    roles[safe_log_label(payload.get("role"))] += 1
+                message = payload.get("message")
+                if isinstance(message, dict) and isinstance(message.get("role"), str):
+                    roles[safe_log_label(message.get("role"))] += 1
+                item = payload.get("item")
+                if isinstance(item, dict):
+                    item_types[safe_log_label(item.get("type"))] += 1
+                info = payload.get("info")
+                if isinstance(info, dict) and isinstance(
+                    info.get("model_context_window"), int
+                ):
+                    context_windows[str(info["model_context_window"])] += 1
+                if isinstance(payload.get("cwd"), str):
+                    records_with_cwd += 1
+                usage = usage_from_payload(payload)
+                if usage:
+                    records_with_usage += 1
+                    final_usage = usage
+                    for field, value in usage.items():
+                        max_usage[field] = max(max_usage[field], value)
+                timestamp = timestamp_from_record(obj, payload)
+                if timestamp is not None:
+                    timestamps.append(timestamp.astimezone())
+    except OSError as exc:
+        die(f"Could not read {path}: {exc}")
+
+    status = path_status(path)
+    first_ts = (
+        min(timestamps).strftime("%Y-%m-%d %H:%M:%S %Z %z") if timestamps else None
+    )
+    last_ts = (
+        max(timestamps).strftime("%Y-%m-%d %H:%M:%S %Z %z") if timestamps else None
+    )
+    return {
+        "retrieved_at_local": local_now_text(),
+        "network_calls_made": 0,
+        "privacy_note": "Aggregated JSONL metadata only; no prompts, outputs, commands, diffs, raw JSON, tokens, account IDs, or secrets are printed.",
+        "file": status,
+        "lines_seen": lines_seen,
+        "json_objects": json_objects,
+        "parse_errors": parse_errors,
+        "records_with_usage_snapshots": records_with_usage,
+        "records_with_cwd": records_with_cwd,
+        "timestamp_start_local": first_ts,
+        "timestamp_end_local": last_ts,
+        "top_level_keys": top_level_keys.most_common(top),
+        "payload_keys": payload_keys.most_common(top),
+        "record_types": record_types.most_common(top),
+        "item_types": item_types.most_common(top),
+        "roles": roles.most_common(top),
+        "models": models.most_common(top),
+        "providers": providers.most_common(top),
+        "context_windows": context_windows.most_common(top),
+        "final_token_usage_seen": final_usage or {},
+        "max_token_usage_seen": dict(max_usage),
+    }
+
+
+def print_count_rows(title: str, rows: list[tuple[str, int]]) -> None:
+    print_counter_table(
+        title, ["Value", "Count"], [[name, fmt_int(count)] for name, count in rows]
+    )
+
+
+def print_log_inspection(data: dict[str, Any]) -> None:
+    section("Codex Session JSONL Inspection")
+    explain(
+        "This local report reads one JSONL file and prints aggregate metadata only. It does not print prompts, assistant replies, command text, diffs, raw JSON records, tokens, account IDs, or secret values."
+    )
+    file_info = data.get("file", {})
+    print_counter_table(
+        "File overview",
+        ["Metric", "Value"],
+        [
+            ["File", file_info.get("path")],
+            ["Size", fmt_int(file_info.get("size_bytes"))],
+            ["Modified", file_info.get("mtime_local")],
+            ["Network calls made", fmt_int(data.get("network_calls_made"))],
+            ["Lines seen", fmt_int(data.get("lines_seen"))],
+            ["JSON objects", fmt_int(data.get("json_objects"))],
+            ["Parse errors", fmt_int(data.get("parse_errors"))],
+            [
+                "Records with usage snapshots",
+                fmt_int(data.get("records_with_usage_snapshots")),
+            ],
+            ["Records with cwd metadata", fmt_int(data.get("records_with_cwd"))],
+            ["First timestamp", data.get("timestamp_start_local") or "—"],
+            ["Last timestamp", data.get("timestamp_end_local") or "—"],
+        ],
+    )
+    token_rows = [
+        [
+            field.replace("_", " ").title(),
+            fmt_int(data.get("final_token_usage_seen", {}).get(field)),
+            fmt_int(data.get("max_token_usage_seen", {}).get(field)),
+        ]
+        for field in USAGE_FIELDS
+    ]
+    print_counter_table(
+        "Token counters seen",
+        ["Field", "Final seen", "Max seen"],
+        token_rows,
+    )
+    print_count_rows("Record types", data.get("record_types", []))
+    print_count_rows("Item types", data.get("item_types", []))
+    print_count_rows("Roles", data.get("roles", []))
+    print_count_rows("Models", data.get("models", []))
+    print_count_rows("Providers", data.get("providers", []))
+    print_count_rows("Context windows", data.get("context_windows", []))
+    print_count_rows("Top-level keys", data.get("top_level_keys", []))
+    print_count_rows("Payload keys", data.get("payload_keys", []))
+    print("Notes")
+    print("-----")
+    print(
+        "• This command is read-only, local-only, and inspects exactly one JSONL file."
+    )
+    print("• Field names that look sensitive are redacted before display.")
+
+
+def cmd_inspect_log(args: argparse.Namespace) -> None:
+    set_colour_mode(getattr(args, "colour", None))
+    data = inspect_jsonl_file(Path(args.file).expanduser(), args.top)
+    if args.json:
+        print_json(data)
+    else:
+        print_log_inspection(data)
 
 
 def collect_online_usage() -> dict[str, Any]:
@@ -2993,6 +3489,8 @@ def build_parser() -> argparse.ArgumentParser:
               ./codex_usage.py local-usage --top 20 --days 60
               ./codex_usage.py online-usage --top 5 --no-colour
               ./codex_usage.py api-usage --group-by model --group-by project_id
+              ./codex_usage.py doctor
+              ./codex_usage.py inspect-log ~/.codex/sessions/YYYY/MM/DD/session.jsonl
               ./codex_usage.py export --report all --format txt
 
             Run './codex_usage.py <command> --help' for command-specific switches.
@@ -3086,6 +3584,36 @@ def build_parser() -> argparse.ArgumentParser:
         help="Number of recent daily rows to show. Must be at least 1. Default: 30.",
     )
     local_usage.set_defaults(func=cmd_local_usage)
+
+    doctor = subparsers.add_parser(
+        "doctor",
+        help="Check local setup and environment. Makes no network calls.",
+    )
+    add_common(doctor)
+    doctor.add_argument(
+        "--json", action="store_true", help="Print machine-readable JSON."
+    )
+    doctor.set_defaults(func=cmd_doctor)
+
+    inspect_log = subparsers.add_parser(
+        "inspect-log",
+        help="Inspect aggregate metadata from one local session JSONL file.",
+    )
+    add_common(inspect_log)
+    inspect_log.add_argument(
+        "file",
+        help="Path to one .jsonl file to inspect.",
+    )
+    inspect_log.add_argument(
+        "--json", action="store_true", help="Print machine-readable JSON."
+    )
+    inspect_log.add_argument(
+        "--top",
+        type=positive_int,
+        default=10,
+        help="Number of aggregate rows to show. Must be at least 1. Default: 10.",
+    )
+    inspect_log.set_defaults(func=cmd_inspect_log)
 
     online_usage = subparsers.add_parser(
         "online-usage",

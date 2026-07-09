@@ -1461,6 +1461,9 @@ def print_doctor(data: dict[str, Any]) -> None:
     print("-----")
     print("• This command is read-only, local-only, and makes no network calls.")
     print("• Secret values and account identifiers are not printed.")
+    print(
+        "• Output may include absolute local paths; redact or relativise them before sharing diagnostics publicly."
+    )
 
 
 def cmd_doctor(args: argparse.Namespace) -> None:
@@ -1487,6 +1490,24 @@ def safe_key_label(value: Any) -> str:
     return "[REDACTED_KEY]" if SENSITIVE_KEY_RE.search(text) else text
 
 
+def number_from_json_value(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        number = float(value)
+    elif isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            number = float(text)
+        except ValueError:
+            return None
+    else:
+        return None
+    return number if math.isfinite(number) else None
+
+
 def usage_from_payload(payload: dict[str, Any]) -> dict[str, int] | None:
     info = payload.get("info")
     if not isinstance(info, dict):
@@ -1496,9 +1517,9 @@ def usage_from_payload(payload: dict[str, Any]) -> dict[str, int] | None:
         return None
     usage: dict[str, int] = {}
     for field in USAGE_FIELDS:
-        value = total_usage.get(field)
-        if isinstance(value, (int, float)):
-            usage[field] = int(value)
+        number = number_from_json_value(total_usage.get(field))
+        if number is not None:
+            usage[field] = int(number)
     return usage or None
 
 
@@ -1508,8 +1529,8 @@ def timestamp_from_record(
     for container in (payload, obj):
         for key in ("timestamp", "created_at", "time", "ts"):
             value = container.get(key)
-            if isinstance(value, (int, float)):
-                number = float(value)
+            number = number_from_json_value(value)
+            if number is not None:
                 if number > 10_000_000_000:
                     number /= 1000
                 try:
@@ -1692,6 +1713,9 @@ def print_log_inspection(data: dict[str, Any]) -> None:
         "• This command is read-only, local-only, and inspects exactly one JSONL file."
     )
     print("• Field names that look sensitive are redacted before display.")
+    print(
+        "• Output may include absolute local paths; redact or relativise them before sharing diagnostics publicly."
+    )
 
 
 def cmd_inspect_log(args: argparse.Namespace) -> None:
@@ -3588,6 +3612,8 @@ def build_parser() -> argparse.ArgumentParser:
     doctor = subparsers.add_parser(
         "doctor",
         help="Check local setup and environment. Makes no network calls.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="Output may include absolute local paths. Redact or relativise them before sharing diagnostics publicly.",
     )
     add_common(doctor)
     doctor.add_argument(
@@ -3598,6 +3624,8 @@ def build_parser() -> argparse.ArgumentParser:
     inspect_log = subparsers.add_parser(
         "inspect-log",
         help="Inspect aggregate metadata from one local session JSONL file.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="Output may include absolute local paths. Redact or relativise them before sharing diagnostics publicly.",
     )
     add_common(inspect_log)
     inspect_log.add_argument(

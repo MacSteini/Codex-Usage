@@ -315,6 +315,8 @@ Local usage mode reads metadata and counters from your Codex home directory. It 
 
 `inspect-log` reads one `.jsonl` file and prints summary metadata only: counts, timestamps, safe record categories and token counters. It does not print prompts, assistant replies, command text, diffs, raw JSON records, tokens, account IDs or secret values.
 
+`doctor` and `inspect-log` can print absolute local paths, such as the script path, Codex home path, session directory or inspected file path. Redact or relativise those paths before sharing diagnostic output publicly.
+
 The optional `api-usage` report reads `OPENAI_ADMIN_KEY` from the environment. It does not accept the key as a command-line argument, does not read it from `<Codex home>/auth.json`, and does not print or export it. API key IDs, organisation IDs, project IDs and user IDs are shortened before display or export. Do not include real Admin keys, raw billing responses or private account identifiers in issues, screenshots, fixtures or commits.
 
 ## Network Behaviour
